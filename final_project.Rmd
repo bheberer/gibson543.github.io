@@ -1,0 +1,311 @@
+---
+title: "Final Project"
+author: "William Heberer"
+date: "May 17, 2018"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction 
+
+Hello, my name is William Heberer, and in this tutorial, I'm going to be going through the entire data science pipeline using the R programming language. For this tutorial, we're going to be using data from the START Consortium about Global Terrorism. Firstly, I'm going to be showing you how to acquire and clean the data into something more manageble and user friendly. Next, we will be performing what's called exploratory data analysis in order to visualize what is going on with our data and to develop a hypothesis. Finally, we will be testing the hypothesis that we come up wiwth by applying different machine learning models to the data. 
+
+# Libraries
+
+To start with, we need to import the libraries that will be required for this project. 
+
+```{r libs, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(broom)
+library(magrittr)
+library(ISLR)
+library(ggplot2)
+library(tidyr)
+library(randomForest)
+library(caret)
+library(purrr)
+library(tree)
+```
+
+# Data Curation and Tidying 
+
+The next thing we have to do is get our dataset into RStudio. You can download the datasets from https://www.kaggle.com/START-UMD/gtd/data and https://www.kaggle.com/fernandol/countries-of-the-world/data. Make sure that RStudio is pointing to the correct working directory before you try and bring your data in. Once our dataset has been brought in, the actual coding will begin. Our first step will be to tidy up the data that we've gotten to put it into a more useable form for us. 
+
+```{r data, message=FALSE, warning=FALSE}
+data <- read_csv("globalterrorismdb_0617dist.csv")
+data2 <- read_csv("countries_of_the_world.csv")
+head(data)
+head(data2)
+```
+
+Eventually, we're going to want to combine these two tables into one dataset. We do this with a join function that combines the tables based on a common attribute. The attribute we're going to use is the name of the countries in the datasets, so we want to make sure that we fix any differences in naming convention between the two, as the tables wont combine properly otherwise. The palistinian territories are also represented differently in these datasets, with the global terrorist database having them listed as one nation, so well combine the two together in our second dataset. 
+
+```{r tidy, message=FALSE, warning=FALSE}
+data2[data2$Country=="Bahamas, The", "Country"] <- "Bahamas"
+data2[data2$Country=="Bosnia & Herzegovina", "Country"] <- "Bosnia-Herzegovina"
+data2[data2$Country=="Central African Rep.", "Country"] <- "Central African Republic"
+data2[data2$Country=="Congo, Dem. Rep.", "Country"] <- "Democratic Republic of the Congo"
+data2[data2$Country=="Gambia, The", "Country"] <- "Gambia"
+data2[data2$Country=="Congo, Repub. of the", "Country"] <- "Republic of the Congo"
+data2[data2$Country=="Trinidad & Tobago", "Country"] <- "Trinidad and Tobago"
+data2[data2$Country=="Gaza Strip", "Country"] <- "West Bank and Gaza Strip"
+
+gazan_gdp <- data2$`GDP ($ per capita)`[75]
+westBank_gdp <- data2$`GDP ($ per capita)`[223]
+avg_palisitnian_gdp <- (gazan_gdp + westBank_gdp) / 2
+
+data2$`GDP ($ per capita)`[75] <- avg_palisitnian_gdp
+colnames(data)[9] <- "Country"
+colnames(data2)[9] <- "GDP"
+```
+
+So now that these descrepencies have been handled, we can join the two tables together with an inner_join. There are many different types of joins in R, you can read up on it __[here](http://stat545.com/bit001_dplyr-cheatsheet.html)__.
+```{r as, message=FALSE, warning=FALSE}
+data <- data %>%
+  inner_join(data2, by="Country")
+head(data)
+```
+
+As you can see, there is a ton of information in the dataset and it's fairly ugly as well. We want to fix that. Right now, there are plenty of columns that are completely useless to us, such as the 'extended' and 'resolution' attributes, so we're going to get rid of them by using the select function to select the columns that I actually want from the original dataset. 
+
+```{r tidy1, message=FALSE, warning=FALSE}
+data <- data %>%
+  select(eventid, iyear, Country, region_txt, attacktype1_txt, GDP)
+```
+
+So now the data has been condensed quite a bit in terms of the attributes were looking at, which is good. There's still more that we can do though. I'm now noticing a lot of the column names aren't really too great, so we should take care of that too make them a bit more readable and understandable. To do this we will use the names function on the dataset and apply a vector of new names to it. 
+
+```{r tidy2, messsage=FALSE, warning=FALSE}
+names(data) <- c("Event_ID", "Year", "Country", "Region", "Attack_Type", "GDP")
+```
+
+Okay, now that everything's readable, lets condense the data a little bit more as we're still working with a lot here. For the next step, lets use the filter function to filter the data by year, and only look at terrorist attacks that have occured from 2000 to today, or the most recent year in the data set, which is 2016.
+
+```{r tidy3, message=FALSE, warning=FALSE}
+data <- data %>%
+  filter(Year >= 2000)
+head(data)
+```
+
+Okay, so now our data has been tidied up and is ready to be used. Lets move on to the next step of the process, exploratory data analysis. 
+
+# Exploratory Data Analysis
+
+Now that we have our data tidied, we can begin analyzing it. The goal of exploratory data analysis is to better understand the data you're working with and help us make decisions about what machine learning model and what hypothesis we're going to use later. 
+
+First things first, we want to see what we can learn from this dataset. For our first visualization, I'm going to see how terrorism has fluctuated over time. To do this, we're going group our data together by year using the group_by() function. This ensures that every operation we do after it is applied to each group seperately. Then well add up all of the rows that we have for that year using n() and the summarize() function. We then use the ggplot function to lay out our visualization. 
+
+For plotting, we're going to use ggplot, and it's function geom_line() to create a line graph. You can use the labs function to label your graph. 
+
+```{r filler1, message=FALSE, warning=FALSE}
+ter_over_time <- data %>%
+  group_by(Year) %>%
+  summarize(Attacks = n())
+
+ter_over_time %>%
+  ggplot(aes(x=Year, y=Attacks)) +
+  geom_line() +
+  labs(title="Global Terrorism Over Time")
+```
+
+Looking at this plot we can see that there's a huge uptick of terrorism in the most recent years, which, with the rise of ISIS and general instability in the world recently, is not a huge surprise. We may be able to use this for a hypothesis, but I'm not particularly interested in the relationship between time and terrorism, I want to look for something else that might have a relationship with terrorism. 
+
+For our next plot, lets plot the number of terrorist attacks that occur within a given region of the world. This will let us know which regions have the highest amount of terrorist attacks. Similar to our previous plot, we're just going to group our data together by region and add up all of the rows in each one. 
+
+```{r fill2, message=FALSE, warning=FALSE}
+ter_per_region <- data %>%
+  group_by(Region) %>%
+  summarize(Attacks = n())
+
+ter_per_region %>%
+  ggplot(aes(x=Region, y=Attacks)) +
+  geom_bar(aes(fill=Region), stat="identity") + 
+  scale_x_discrete(labels = abbreviate) +
+  labs(title="Terrorist Attacks Per Region", x="Region", y="Attacks")
+```
+
+With this plot we can see that the regions of the world with the highest amount of terrorism in the world are the Middle East + North Africa and South Asia, with Sub-Suharan Africa coming in a far third place. Generally speaking, these areas of the world are significantly worse off economically than the other regions of the world shown on this plot, like North America or Western Europe, which are represented far less in this visualization. We may be onto something that we can use as a hypothesis. 
+
+So our last visualization gave us the idea that there may some relationship between a countries economy and the amount of terrorist attacks that it recieves. In order to visualize this, we're going to create a point plot that plots a countries GDP against the number of terrorist attacks that it has recieved. 
+
+```{r anal1, message=FALSE, warning=FALSE}
+attacks_by_country <- data %>%
+  group_by(Country) %>%
+  summarize(Attacks = n(), GDP = mean(GDP)) 
+
+attacks_by_country %>%
+  ggplot(aes(x=GDP, y=Attacks)) + 
+  geom_point(alpha = 1/5, colour="red", size=3) + 
+  labs(title="Terrorist attacks based on GDP", x="GDP", y="Number of Attacks")
+```
+
+Taking a look at this data, it seems like there is a fairly weak negative relationship between GDP and attacks, meaning that generally speaking, the higher a countries GDP, the less terrorist attacks they're going to have. However, this data is heavily concentrated towards the bottom left of the graph, so we're going to check out how much skew this data has by using the median and first and third quartiles to calculate a skew statistic. 
+
+```{r anal2, message=FALSE, warning=FALSE}
+skew_df <- data %>%
+  summarize(med=median(GDP, na.rm=TRUE), q1=quantile(GDP, 1/4, na.rm=TRUE), q3=quantile(GDP, 3/4, na.rm=TRUE)) %>%
+  mutate(d1=med-q1, d2=q3-med, skew=d1-d2) %>%
+  select(d1, d2, skew)
+skew_df
+```
+
+As you can see there's a pretty strong negative skew in this data, so we're going to attempt to fix it with a logarithmic transform. Right now all of our values for GDP are positive, so we just have to use the Log2 function to transform our data. 
+
+```{r skew, message=FALSE, warning=FALSE}
+attacks_by_country <- attacks_by_country %>%
+  mutate(transformed_GDP=log2(GDP))
+```
+
+Now that we've taken care of the skew, there's one more thing that we want to take care of with this data. We want to center and scale our data using the mean and standard deviation of our GDP attribute. Centering and scaling is part of a process known as standardization, which essentially converts variable units into standard units, allowing us to better compare our data down the line. To center, we just have to subtract the mean GDP from each countries GDP, and to scale, we just have to divide each countries GDP by the standard deviation of all GDPs. Once we've standardized our data, we're going to lay out the same plot that we did previously and see what the differences are. I'm also going to use the geom_smooth() function with the "lm" method in order to plot a regression line with it. 
+
+```{r an, message=FALSE, warning=FALSE}
+mean_GDP <- mean(attacks_by_country$transformed_GDP, na.rm=TRUE)
+sd_GDP <- sd(attacks_by_country$transformed_GDP, na.rm=TRUE)
+
+standard_df <- attacks_by_country %>%
+  mutate(mean_GDP=mean_GDP) %>%
+  mutate(sd_GDP=sd_GDP) %>%
+  mutate(standardized_GDP=(transformed_GDP-mean_GDP)/sd_GDP) %>%
+  select(Country, standardized_GDP, Attacks) 
+
+standard_df
+
+standard_df %>%
+  ggplot(aes(x=standardized_GDP, y=Attacks)) + 
+  geom_point(alpha = 1/5, colour="red", size=3) +
+  geom_smooth(method="lm") +
+  labs(title="Terrorist attacks based on Standardized GDP", x="Standardized GDP", y="Number of Attacks")
+```
+
+Looking at this plot, we can tell that generally speaking, the lower your GDP is, the more likely you are to have a high number of terrorist attacks. 
+
+# Hypothesis Testing
+
+Now we can being hypothesis testing. Hypothesis testing is basically a way of testing our data against certain hypothesis that we come up with during our EDA phase. With this dataset, we're going to test to see whether there is a statistically significant relationship between the standardized GDP of a country and the amount of terrorism it recieves. Our null hypothesis will read as "There is no statistically significant relationship between GDP and number of attacks". The threshold for deciding whether to reject the null hypothesis or not is alpha = 0.05 which means we will reject the null hypothesis if we find that the value of our hypothesis is below 0.05. In order to find out what the value of our hypothesis is, we're going to fit our data onto a linear model and use the tidy() function to get our p-value. 
+
+```{r a, message=FALSE, warning=FALSE}
+
+test_model <- lm(Attacks~standardized_GDP, data=standard_df)
+  
+test_df <- test_model %>%
+  tidy()
+
+test_df
+```
+
+Here we can see that the p-value we're looking for is 0.0447818656, which is less than 0.05, meaning we can safely reject the null hypothesis. With this we can conclude that there is a statistically significant relationship between GDP and number of attacks. 
+
+# Machine Learning
+
+In this section we're going to be using machine learning in order to predict an outcome. The thing we're going to be trying to predict is whether or not a certain country has more total terrorist attacks than the United States based on GDP. We're going to be using a random forest in order to make these predictions. Firstly, we're going to create a new table that contains the outcome we want to predict. We do this by seperating the data into two different tables based on the number of attacks they have. Then they get the appropriate yes or no assignment added to them, and they get binded back together with the rbind function, which adds them back together vertically. 
+
+```{r ml, warning=FALSE, message=FALSE}
+
+us_attacks <- standard_df[[3]][146]
+
+greater_df <- standard_df %>%
+  filter(Attacks >= us_attacks) %>%
+  mutate(More_Than_USA = "Yes")
+
+lesser_df <- standard_df %>%
+  filter(Attacks < us_attacks) %>%
+  mutate(More_Than_USA = "No")
+
+final_df <- rbind(greater_df, lesser_df)
+final_df
+```
+
+Now we want to split our data up into two different parts. We want a set of data to train our model with and a set of data to test our model with, and we're going to split up the data in a random 80/20 manner. 
+
+```{r ml2, warning=FALSE, message=FALSE}
+set.seed(1234)
+test_log_df <- final_df %>%
+  group_by(More_Than_USA) %>%
+  sample_frac(0.2) %>%
+  ungroup()
+
+train_log_df <- final_df %>%
+  anti_join(test_log_df, by="Country")
+
+train_log_df$More_Than_USA <- as.factor(train_log_df$More_Than_USA)
+train_log_df <- na.omit(train_log_df)
+```
+
+Now that we have our training and testing data, we're now ready to actually fit the model. We do this with the randomForest function. 
+```{r ml3, message=FALSE, warning=FALSE}
+rf <- randomForest(More_Than_USA~standardized_GDP, data=train_log_df %>% select(-Country))
+rf
+```
+
+With the model trained, we can use it to make predictions on the test set with the predict function. 
+```{r predict, message=FALSE, warning=FALSE}
+test_predictions <- predict(rf, newdata=test_log_df %>% select(-Country))
+```
+
+Now we can create a confusion matrix and calculate the error rate of our machine learning model. 
+```{r predict2, message=FALSE, warning=FALSE}
+table(pred=test_predictions, observed=test_log_df$More_Than_USA)
+
+error_rate <- 1 - (24 / 31)
+error_rate
+```
+
+As we can see, the error rate for our random forest is about 22.58%.
+
+Now, what if we wanted to compare two different machine learning models? Well, we can do this by using a technique referrred to as Cross-Validation. Cross-Validation is a resampling method to obtain estimates of test error rate. We're going to use 10-Fold cross-validation here, meaning that we split the data up into 10 different groups and then train the model on each group. To create our groups, we're going to use the createFolds function from the caret library, and we use the imap function from the purrr library to will apply everything to each group. The models we're going to be using are the same random forest model from before, as well as a decision tree model. You can find out more about these models __[here](https://www.analyticsvidhya.com/blog/2016/04/complete-tutorial-tree-based-modeling-scratch-in-python/)__. 
+
+```{r ml5, message=FALSE, warning=FALSE}
+set.seed(1234)
+result_df <- createFolds(final_df$More_Than_USA, k=10) %>%
+  imap(function(test_indices, fold_number) {
+    train_df <- final_df %>%
+      select(-Country) %>%
+      slice(-test_indices) %>%
+      na.omit()
+    
+    train_df$More_Than_USA <- as.factor(train_df$More_Than_USA)
+    
+    test_df <- final_df %>%
+      select(-Country) %>%
+      slice(test_indices) %>%
+      na.omit()
+      
+    rf <- randomForest(More_Than_USA~standardized_GDP, data=train_df)
+    dt <- tree(tree(More_Than_USA~standardized_GDP, data=train_df))
+    
+    test_df %>%
+      select(observed_label = More_Than_USA) %>%
+      mutate(fold=fold_number) %>%
+      mutate(prob_greater_rf = predict(rf, newdata=test_df, type="prob")[,"Yes"]) %>%
+      mutate(predicted_label_rf = ifelse(prob_greater_rf > 0.5, "Yes", "No")) %>%
+      mutate(prob_greater_dt = predict(dt, newdata=test_df, type="vector")[,"Yes"]) %>%
+      mutate(predicted_label_dt = ifelse(prob_greater_dt > 0.5, "Yes", "No")) 
+  }) %>%
+  reduce(bind_rows)
+result_df
+```
+
+Now we can compute the error rates for each model on each fold. 
+```{r err, message=FALSE, warning=FALSE}
+result_df %>%
+  mutate(error_rf = observed_label != predicted_label_rf, error_dt = observed_label != predicted_label_dt) %>%
+  group_by(fold) %>%
+  summarize(rf = mean(error_rf), dt = mean(error_dt)) %>%
+  gather(model, error, -fold) %>%
+  lm(error~model, data=.) %>%
+  tidy()
+```
+
+With this table, we can actually see that the decision tree model has a lower error rate than the random forest, meaning that overall it performed better than the random forest model did. 
+
+# Conclusions
+
+To summarize, we've learned quite a bit about the data science pipeline. We started with data curation and tidying techniques in order to bring in data and make it usable for analysis. We then go to the next phase, which is Exploratory Data Analysis, in which we made plots to visualize relationships within the data, and used those plots to determine what other changes we had to make to the data in order to make it even better. We then discussed how we can use our data to test null hypothesis. Finally, we looked at different machine learning models and how to compare them against one another to find out which one performs the best. 
+
+Throughout all of this we learned some interesting things. We've highlighted that economic hardship and struggle definetily have a role to play when it comes to terrorism globally and hopefully brought us a little bit closer to understanding why these attacks happen. 
